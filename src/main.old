@@ -1,0 +1,304 @@
+#include <ESP8266WiFi.h>
+#include <DNSServer.h>
+#include <ESP8266WebServer.h>
+#include <WiFiManager.h>
+
+#include <Micronova.h>
+#include <uri/UriBraces.h>
+#include <SoftwareSerial.h>
+#include <Adafruit_NeoPixel.h>
+
+ESP8266WebServer server(80);
+Micronova micronova;
+Adafruit_NeoPixel led(1, 2, NEO_GRB);
+boolean buttonStatus = false;
+unsigned long buttonPressMS = 0;
+
+void sendNoValue(bool error, byte retry)
+{
+	String json = "{\"error\":" + String(error) + ",\"retry\":" + String(retry) + "}";
+	server.send(200, "application/json", json);
+}
+void sendBool(bool value, bool error, byte retry)
+{
+	String json = "{\"value\":" + String(value) + ",\"error\":" + String(error) + ",\"retry\":" + String(retry) + "}";
+	server.send(200, "application/json", json);
+}
+void sendByte(byte value, bool error, byte retry)
+{
+	String json = "{\"value\":" + String((byte)value) + ",\"error\":" + String(error) + ",\"retry\":" + String(retry) + "}";
+	server.send(200, "application/json", json);
+}
+void sendByteAndString(byte value, String str, bool error, byte retry)
+{
+	String json = "{\"value\":" + String((byte)value) + ",\"valueAsString\":\"" + str + "\",\"error\":" + String(error) + ",\"retry\":" + String(retry) + "}";
+	server.send(200, "application/json", json);
+}
+void sendInt(int value, bool error, byte retry)
+{
+	String json = "{\"value\":" + String(value) + ",\"error\":" + String(error) + ",\"retry\":" + String(retry) + "}";
+	server.send(200, "application/json", json);
+}
+
+void setup()
+{
+
+	WiFiManager wifiManager;
+	led.begin();
+	led.show();
+	pinMode(15, INPUT);
+
+	if (!wifiManager.autoConnect("Poile à granule AP", "123456789"))
+	{
+		ESP.reset();
+		delay(1000);
+	}
+
+	server.on(UriBraces("/get/{}"), []() {
+		if (server.method() == HTTP_GET)
+		{
+			String dataName = server.pathArg(0);
+			
+			bool error;
+			char retry;
+
+			if (dataName == "run")
+			{
+				char value = micronova.getRun(&error, &retry);
+				sendByte(value, error, retry);
+			}
+			else if (dataName == "temperature-setpoint")
+			{
+				char value = micronova.getTemperatureSetpoint(&error, &retry);
+				sendByte(value, error, retry);
+			}
+			else if (dataName == "room-temperature")
+			{
+				char value = micronova.getRoomTemperature(&error, &retry);
+				sendByte(value, error, retry);
+			}
+			else if (dataName == "fume-temperature")
+			{
+				char value = micronova.getFumeTemperature(&error, &retry);
+				sendByte(value, error, retry);
+			}
+			else if (dataName == "state")
+			{
+				char value = micronova.getState(&error, &retry);
+				sendByteAndString(value, micronova.stateString[value], error, retry);
+			}
+			else if (dataName == "time-before-cleanup")
+			{
+				int value = micronova.getTimeBeforeCleanUp(&error, &retry);
+				sendInt(value, error, retry);
+			}
+			else
+			{
+				server.send(503, "text/plain", "Wrong data name");
+			}
+		}
+		else
+		{
+			server.send(405, "text/plain", "Method Not Allowed");
+		}
+	});
+
+	server.on(UriBraces("/set/{}/{}"), []() {
+		if (server.method() == HTTP_GET)
+		{
+			String dataName = server.pathArg(0);
+			char value = server.pathArg(1).toInt();
+			bool error;
+			char retry;
+			if (dataName == "temperature-setpoint")
+			{
+				micronova.setTemperatureSetPoint(value, &error, &retry);
+				sendNoValue(error, retry);
+			}
+			else if (dataName == "state")
+			{
+				micronova.setState(value, &error, &retry);
+				sendNoValue(error, retry);
+			}
+			else
+			{
+				server.send(503, "text/plain", "Wrong data name");
+			}
+		}
+		else
+		{
+			server.send(405, "text/plain", "Method Not Allowed");
+		}
+	});
+
+	server.on(UriBraces("/stream/{}/{}"), []() {
+		if (server.method() == HTTP_GET)
+		{
+			String type = server.pathArg(0);
+			char address = server.pathArg(1).toInt();
+
+			if (type != "RAM" && type != "EEPROM")
+			{
+				server.send(503, "text/plain", "Wrong data name");
+			}
+			else
+			{
+
+				bool error;
+				char retry;
+				char value;
+
+				WiFiClient client = server.client();
+
+				client.print("HTTP/1.1 200 OK\r\n");
+				client.print("Content-Type: text/plain\r\n");
+				client.print("Connection: close\r\n");
+				client.print("Access-Control-Allow-Origin: *\r\n");
+				client.print("\r\n");
+
+				client.write(String("Value\tError\tRetry\r\n").c_str());
+
+				while (client.connected())
+				{
+					if (type == "RAM")
+					{
+						value = micronova.readRAM(address, &error, &retry);
+					}
+					else if (type == "EEPROM")
+					{
+						value = micronova.readEEPROM(address, &error, &retry);
+					}
+
+					client.write((String((int)value) + "\t" + String(error ? "true" : "false") + "\t" + String((int)retry) + "\r\n").c_str());
+				}
+			}
+		}
+		else
+		{
+			server.send(405, "text/plain", "Method Not Allowed");
+		}
+	});
+
+	server.on(UriBraces("/read/{}/{}"), []() {
+		if (server.method() == HTTP_GET)
+		{
+			String type = server.pathArg(0);
+			char address = server.pathArg(1).toInt();
+
+			if (type != "RAM" && type != "EEPROM")
+			{
+				server.send(503, "text/plain", "Wrong data name");
+			}
+			else
+			{
+
+				bool error;
+				char retry;
+				char value;
+
+				if (type == "RAM")
+				{
+					value = micronova.readRAM(address, &error, &retry);
+				}
+				else if (type == "EEPROM")
+				{
+					value = micronova.readEEPROM(address, &error, &retry);
+				}
+
+				server.send(200, "text/plain", ("Value\tError\tRetry\r\n" + String((int)value) + "\t" + String(error ? "true" : "false") + "\t" + String((int)retry) + "\r\n"));
+			}
+		}
+		else
+		{
+			server.send(405, "text/plain", "Method Not Allowed");
+		}
+	});
+
+	server.on(UriBraces("/write/{}/{}/{}"), []() {
+		if (server.method() == HTTP_GET)
+		{
+			String type = server.pathArg(0);
+			char address = server.pathArg(1).toInt();
+			char value = server.pathArg(2).toInt();
+
+			if (type != "RAM" && type != "EEPROM")
+			{
+				server.send(503, "text/plain", "Wrong data name");
+			}
+			else
+			{
+
+				bool error;
+				char retry;
+				char value;
+
+				if (type == "RAM")
+				{
+					micronova.writeRAM(address, value, &error, &retry);
+				}
+				else if (type == "EEPROM")
+				{
+					micronova.writeEEPROM(address, value, &error, &retry);
+				}
+
+				sendNoValue(error, retry);
+			}
+		}
+		else
+		{
+			server.send(405, "text/plain", "Method Not Allowed");
+		}
+	});
+
+	server.on(UriBraces("/led/{}/{}/{}"), []() {
+		if (server.method() == HTTP_GET)
+		{
+			char red = server.pathArg(0).toInt();
+			char green = server.pathArg(1).toInt();
+			char blue = server.pathArg(2).toInt();
+
+			led.setPixelColor(0, red, green, blue);
+			led.show();
+
+			sendNoValue(false, 0);
+		}
+		else
+		{
+			server.send(405, "text/plain", "Method Not Allowed");
+		}
+	});
+
+	server.on(UriBraces("/button"), []() {
+		if (server.method() == HTTP_GET)
+		{
+			sendBool(buttonStatus, false, 0);
+			buttonStatus = false;
+			buttonPressMS = 0;
+		}
+		else
+		{
+			server.send(405, "text/plain", "Method Not Allowed");
+		}
+	});
+
+	server.begin();
+}
+
+void loop()
+{
+	server.handleClient();
+
+	int status = digitalRead(15);
+
+	if (status >= 1 && !buttonStatus)
+	{
+		buttonStatus = true;
+		buttonPressMS = millis();
+	}
+
+	if ((millis() - buttonPressMS) >= 10000)
+	{
+		buttonStatus = false;
+		buttonPressMS = 0;
+	}
+}
