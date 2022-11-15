@@ -1,17 +1,63 @@
 #include <ESP8266WiFi.h>
 #include <DNSServer.h>
-#include <ESP8266WebServer.h>
 #include <WiFiManager.h>
 
 #include <Micronova.h>
-#include <uri/UriBraces.h>
 #include <SoftwareSerial.h>
+#include <PubSubClient.h>
 
+#define MQTT_SERVER "192.168.1.101"
+#define MQTT_PORT 1883
 
-ESP8266WebServer server(80);
 Micronova micronova;
+WiFiClient espClient;
+PubSubClient client(espClient);
 
-int additionalFanStatus = 0;
+int additionalFanStatus = 1;
+
+long oldMilli = 0;
+char sec = 0;
+char oldSec = 0;
+
+bool error;
+char retry;
+char state;
+int timeBeforeCleanUp;
+char fumeTemperature;
+char roomTemperature;
+char temperatureSetPoint;
+char flamePower;
+
+void callback(char *topic, byte *payload, unsigned int length)
+{
+	payload[length] = '\0'; 
+	
+	int value = String((char *)payload).toInt();
+	
+	if (String(topic) == "stove/temperatureSetPoint" && temperatureSetPoint != value)
+	{
+		Serial.println(topic);
+		Serial.println(value);
+		micronova.setTemperatureSetPoint(value, &error, &retry);
+	}
+	if (String(topic) == "stove/flamePower" && flamePower != value)
+	{
+		Serial.println(topic);
+		Serial.println(value);
+		micronova.setFlamePower(value, &error, &retry);
+	}
+	if (String(topic) == "stove/additionalFan")
+	{
+		Serial.println(topic);
+		Serial.println(value);
+		additionalFanStatus = value;
+	}
+}
+
+void mqtt_publish(String topic, int value)
+{
+	client.publish(topic.c_str(), String(value).c_str());
+}
 
 void setup()
 {
@@ -19,90 +65,79 @@ void setup()
 
 	WiFiManager wifiManager;
 
-	pinMode(13, OUTPUT); //D0 Ventillateur 
-	pinMode(0, OUTPUT); //D3 3.3V constant 
-	digitalWrite(0,HIGH);
-	//wifiManager.resetSettings();
+	pinMode(13, OUTPUT); // D0 Ventillateur
+	pinMode(0, OUTPUT);	 // D3 3.3V constant
+	digitalWrite(0, HIGH);
+	// wifiManager.resetSettings();
 
-	if (!wifiManager.autoConnect("Poile à granule AP", "123456789")) {
+	if (!wifiManager.autoConnect("Poile à granule AP", "123456789"))
+	{
 		WiFi.hostname("poile_a_granule");
 		ESP.reset();
 		delay(1000);
 	}
 
-
-	server.on(UriBraces("/{}"), []() {
-		
-		String dataName = server.pathArg(0);
-		bool error;
-		char retry;
-		
-		if (server.method() == HTTP_GET) {
-		
-			int value;
-
-			Serial.println("GET:"+dataName);
-
-			if (dataName == "run") {
-				value = micronova.getRun(&error, &retry);
-			} else if (dataName == "temperatureSetpoint") {
-				value = micronova.getTemperatureSetpoint(&error, &retry);
-			} else if (dataName == "roomTemperature") {
-				value = micronova.getRoomTemperature(&error, &retry);
-			} else if (dataName == "fumeTemperature") {
-				value = micronova.getFumeTemperature(&error, &retry);
-			} else if (dataName == "state") {
-				value = micronova.getState(&error, &retry);
-			} else if (dataName == "timeBeforeCleanup") {
-				value = micronova.getTimeBeforeCleanUp(&error, &retry);
-			} else if (dataName == "flamePower") {
-				value = micronova.getFlamePower(&error, &retry);
-			}  else if (dataName == "externalFan") {
-				value = additionalFanStatus;
-			} else {
-				server.send(503, "text/plain", "");
-			}
-
-			if(error){
-				server.send(500, "text/plain", String((int)retry));
-			}else{
-				server.send(200, "text/plain", String(value));
-			}
-
-		} else if (server.method() == HTTP_POST) {
-			char value = server.arg("plain").toInt();
-
-			Serial.println("POST:"+dataName+" "+String((int)value));
-
-			if (dataName == "temperatureSetpoint") {
-				micronova.setTemperatureSetPoint(value, &error, &retry);
-			}
-			// else if (dataName == "state") {
-			// 	micronova.setState(value, &error, &retry);
-			// }
-			else if (dataName == "additionalFan") {
-				additionalFanStatus = value;
-			} else if (dataName == "flamePower") {
-				micronova.setFlamePower(value, &error, &retry);
-			} else {
-				server.send(503, "text/plain", "Wrong data name");
-			}
-		
-			if(error){
-				server.send(500, "text/plain", String((int)retry));
-			}else{
-				server.send(200, "text/plain", "");
-			}
-		} else {
-			server.send(405, "text/plain", "Method Not Allowed");
-		}
-	});
-	server.begin();
-
+	client.setServer(MQTT_SERVER, MQTT_PORT);
+	client.setCallback(callback); // Déclaration de la fonction de souscription
 }
 
+// setTemperatureSetPoint
+// setState
+// setFlamePower
 
-void loop() {
-		server.handleClient();
-	digitalWrite(13, additionalFanStatus);
+void loop()
+{
+
+	if (!client.connected())
+	{
+		if (!client.connect("stove"))
+		{
+			delay(1000);
+		}
+		else
+		{
+			client.subscribe("stove/temperatureSetPoint");
+			client.subscribe("stove/flamePower");
+			client.subscribe("stove/additionalFan");
+		}
+	}
+	else
+	{
+
+		if (millis() - oldMilli > 1000)
+		{ // top 1s
+			oldMilli = millis();
+			sec = (sec + 1) % 240;
+		}
+
+		if ((sec % 20) == 0 && sec != oldSec)
+		{ // 20s
+			state = micronova.getState(&error, &retry);
+			mqtt_publish("stove/state", state);
+			timeBeforeCleanUp = micronova.getTimeBeforeCleanUp(&error, &retry);
+			mqtt_publish("stove/timeBeforeCleanUp", timeBeforeCleanUp);
+			mqtt_publish("stove/additionalFan", additionalFanStatus);
+		}
+
+		if ((sec % 60) == 0 && sec != oldSec)
+		{ // 1min
+			fumeTemperature = micronova.getFumeTemperature(&error, &retry);
+			mqtt_publish("stove/fumeTemperature", fumeTemperature);
+		}
+
+		if ((sec % 120) == 0 && sec != oldSec)
+		{ // 2min
+			roomTemperature = micronova.getRoomTemperature(&error, &retry);
+			mqtt_publish("stove/roomTemperature", roomTemperature);
+			temperatureSetPoint = micronova.getTemperatureSetPoint(&error, &retry);
+			mqtt_publish("stove/temperatureSetPoint", temperatureSetPoint);
+			flamePower = micronova.getFlamePower(&error, &retry);
+			mqtt_publish("stove/flamePower", flamePower);
+		}
+
+		oldSec = sec;
+	}
+
+	digitalWrite(13, additionalFanStatus && (state >= 3 && state < 7 && fumeTemperature >= 80));
+	client.loop();
 }

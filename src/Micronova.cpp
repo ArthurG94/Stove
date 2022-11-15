@@ -1,6 +1,6 @@
 #include "Micronova.h"
 
-Micronova::Micronova() : serial(5,4)
+Micronova::Micronova() : serial(5, 4)
 {
 
 	this->serial.begin(1200, SWSERIAL_8N2);
@@ -66,7 +66,7 @@ char Micronova::readRAM(char address, bool *error, char *retry)
 
 	this->get_ReadRAM_Buffer(writeBuffer, address);
 
-	//On tente plusieur fois la lecture à moins que l'on ai reçu des données
+	// On tente plusieur fois la lecture à moins que l'on ai reçu des données
 	for (byte i = 0; i < this->RETRY_COUNT; i++)
 	{
 		*retry = i;
@@ -94,7 +94,7 @@ char Micronova::readEEPROM(char address, bool *error, char *retry)
 
 	this->get_ReadEEPROM_Buffer(writeBuffer, address);
 
-	//On tente plusieur fois la lecture à moins que l'on ai reçu des données
+	// On tente plusieur fois la lecture à moins que l'on ai reçu des données
 	for (byte i = 0; i < this->RETRY_COUNT; i++)
 	{
 		*retry = i;
@@ -122,7 +122,7 @@ void Micronova::writeRAM(char address, char value, bool *error, char *retry)
 
 	this->get_WriteRAM_Buffer(writeBuffer, address, value);
 
-	//On tente plusieur fois l'écriture à moins que l'on ai reçu des données
+	// On tente plusieur fois l'écriture à moins que l'on ai reçu des données
 	for (byte i = 0; i < this->RETRY_COUNT; i++)
 	{
 		*retry = i;
@@ -146,7 +146,7 @@ void Micronova::writeEEPROM(char address, char value, bool *error, char *retry)
 
 	this->get_WriteEEPROM_Buffer(writeBuffer, address, value);
 
-	//On tente plusieur fois l'écriture à moins que l'on ai reçu des données
+	// On tente plusieur fois l'écriture à moins que l'on ai reçu des données
 	for (byte i = 0; i < this->RETRY_COUNT; i++)
 	{
 		*retry = i;
@@ -171,7 +171,7 @@ char Micronova::getRun(bool *error, char *retry)
 	return this->readRAM(0, error, retry);
 }
 
-char Micronova::getTemperatureSetpoint(bool *error, char *retry)
+char Micronova::getTemperatureSetPoint(bool *error, char *retry)
 {
 	return this->readEEPROM(0x7D, error, retry) / 2;
 }
@@ -214,10 +214,12 @@ void Micronova::setTemperatureSetPoint(char temp, bool *error, char *retry)
 
 void Micronova::setState(char state, bool *error, char *retry)
 {
-	if (state >= 0 && state < this->stateString->length()) {
+	if (state >= 0 && state < this->stateString->length())
+	{
 		this->writeRAM(0x21, state, error, retry);
 	}
-	else {
+	else
+	{
 		*error = 1;
 	}
 }

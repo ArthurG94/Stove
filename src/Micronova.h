@@ -18,7 +18,7 @@ public:
 	void setTemperatureSetPoint(char temp, bool *error, char *retry);
 	void setState(char state, bool *error, char *retry);
 	void setFlamePower(char power, bool *error, char *retry);
-	char getTemperatureSetpoint(bool *error, char *retry);
+	char getTemperatureSetPoint(bool *error, char *retry);
 	char getRoomTemperature(bool *error, char *retry);
 	char getFumeTemperature(bool *error, char *retry);
 	char getState(bool *error, char *retry);
